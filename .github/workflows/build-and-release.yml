@@ -1,0 +1,123 @@
+name: Android Build & Automatic GitHub Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release Tag (e.g. v1.0.0)'
+        required: false
+        default: 'v1.0.0'
+      release_title:
+        description: 'Release Title'
+        required: false
+        default: 'Release v1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Build & Publish APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make Gradle Wrapper Executable
+        run: |
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+          else
+            gradle wrapper
+            chmod +x ./gradlew
+          fi
+
+      - name: Compile Debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Verify APK Generated
+        id: verify_apk
+        run: |
+          APK_PATH=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          if [ -z "$APK_PATH" ] || [ ! -f "$APK_PATH" ]; then
+            echo "ERROR: APK was not generated!"
+            exit 1
+          fi
+          echo "Found APK at: $APK_PATH"
+          echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
+          
+          # Compute file size and sha256
+          SIZE_BYTES=$(stat -c%s "$APK_PATH")
+          SIZE_MB=$(echo "scale=2; $SIZE_BYTES / 1048576" | bc)
+          SHA256=$(sha256sum "$APK_PATH" | cut -d' ' -f1)
+          
+          echo "apk_size=$SIZE_MB MB" >> $GITHUB_OUTPUT
+          echo "apk_sha=$SHA256" >> $GITHUB_OUTPUT
+
+      - name: Upload APK as Workflow Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: ${{ steps.verify_apk.outputs.apk_path }}
+          retention-days: 90
+
+      - name: Determine Release Tag
+        id: release_info
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.release_tag }}" ]; then
+            TAG="${{ github.event.inputs.release_tag }}"
+            TITLE="${{ github.event.inputs.release_title }}"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            TITLE="Release $TAG"
+          else
+            TAG="v1.0.${{ github.run_number }}"
+            TITLE="Automatic Build v1.0.${{ github.run_number }}"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+
+      - name: Publish GitHub Release with APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_info.outputs.tag }}
+          name: ${{ steps.release_info.outputs.title }}
+          draft: false
+          prerelease: false
+          files: |
+            ${{ steps.verify_apk.outputs.apk_path }}
+          body: |
+            ### 📱 AI Studio Android APK Release
+            
+            - **Release Tag:** `${{ steps.release_info.outputs.tag }}`
+            - **Commit:** `${{ github.sha }}`
+            - **APK File:** `app-debug.apk`
+            - **APK Size:** `${{ steps.verify_apk.outputs.apk_size }}`
+            - **SHA256:** `${{ steps.verify_apk.outputs.apk_sha }}`
+            
+            #### ⬇️ Permanent Direct Download Link:
+            `https://github.com/${{ github.repository }}/releases/latest/download/app-debug.apk`
+            
+            ---
+            *Built automatically using GitHub Actions & Google AI Studio Android Environment.*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

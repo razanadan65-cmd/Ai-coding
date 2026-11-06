@@ -1,0 +1,6 @@
+{
+  "name": "AI Studio",
+  "description": "Mobile-First Autonomous AI Development Platform with local GGUF models, autonomous agent coding, GitHub skills manager, reverse engineering, and on-device APK building.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
